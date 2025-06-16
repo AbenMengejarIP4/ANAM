@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "242440609270",
+    "project_id": "anam-21361",
+    "storage_bucket": "anam-21361.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:242440609270:android:e6a63a7698ef0fe6ebfbd7",
+        "android_client_info": {
+          "package_name": "com.example.anam_application"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADHvbYNLt7fYIJN4-dc6v6_lvxsCiclOk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
