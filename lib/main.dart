@@ -1,9 +1,24 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart'; // Anda perlu menambahkan paket provider
+import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+// import 'firebase_options.dart'; // Dihapus, tidak diperlukan untuk Android saja
 import 'mqtt_service.dart';
 
-void main() {
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Inisialisasi tanpa options untuk Android/iOS
+  await Firebase.initializeApp();
+  print("Handling a background message: ${message.messageId}");
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Panggil initializeApp tanpa options.
+  // Ini akan secara otomatis menggunakan file google-services.json di Android.
+  await Firebase.initializeApp();
+  
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const MyApp());
 }
 
@@ -17,8 +32,21 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'ANAM Fire Detector',
         theme: ThemeData(
-          primarySwatch: Colors.red,
-          visualDensity: VisualDensity.adaptivePlatformDensity,
+          primarySwatch: Colors.deepOrange,
+          scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+          // FIX: Menggunakan CardThemeData, bukan CardTheme
+          cardTheme: const CardThemeData( 
+            elevation: 4,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(12))),
+            margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          ),
+          textTheme: const TextTheme(
+            headlineSmall:
+                TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+            titleLarge: TextStyle(fontWeight: FontWeight.w500),
+            bodyMedium: TextStyle(fontSize: 16),
+          ),
         ),
         home: const MyHomePage(),
       ),
@@ -34,59 +62,151 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
+
   @override
   void initState() {
     super.initState();
-    // Memulai koneksi MQTT saat widget dimuat
+    _setupNotifications();
     final mqttService = Provider.of<MQTTService>(context, listen: false);
     mqttService.connect();
   }
 
+  void _setupNotifications() async {
+    await _firebaseMessaging.requestPermission();
+    final fcmToken = await _firebaseMessaging.getToken();
+    print("====================================================");
+    print("FCM Token: $fcmToken");
+    print("====================================================");
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (mounted && message.notification != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '${message.notification?.title}\n${message.notification?.body}'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Gunakan Consumer untuk secara otomatis membangun kembali UI saat data berubah
     return Scaffold(
       appBar: AppBar(
         title: const Text('ANAM Fire Detector'),
+        backgroundColor: Colors.red,
       ),
       body: Consumer<MQTTService>(
-        builder: (context, mqttService, child) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: <Widget>[
-                Text(
-                  'Status Koneksi:',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                Text(
-                  mqttService.isConnected ? 'Terhubung' : 'Terputus',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: mqttService.isConnected ? Colors.green : Colors.red,
-                      ),
-                ),
-                const SizedBox(height: 40),
-                Text(
-                  'Nilai Sensor Kualitas Udara (MQ-135):',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                Text(
-                  '${mqttService.mq135Value.toStringAsFixed(2)} ppm',
-                  style: Theme.of(context).textTheme.displaySmall,
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Nilai Sensor Asap/Gas (MQ-2):',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                Text(
-                  '${mqttService.mq2Value.toStringAsFixed(2)} ppm',
-                  style: Theme.of(context).textTheme.displaySmall,
-                ),
-              ],
-            ),
+        builder: (context, mqtt, child) {
+          return ListView(
+            padding: const EdgeInsets.all(8.0),
+            children: <Widget>[
+              _buildStatusCard(mqtt),
+              _buildSensorCard('Sensor Asap & Gas (MQ-2)', mqtt.mq2Value, 'ppm'),
+              _buildSensorCard(
+                  'Sensor Kualitas Udara (MQ-135)', mqtt.mq135Value, 'ppm'),
+              _buildInfoCard(mqtt),
+            ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildStatusCard(MQTTService mqtt) {
+    bool isDanger = mqtt.status.contains("BAHAYA") ||
+        mqtt.status.contains("ASAP") ||
+        mqtt.status.contains("GAS");
+    Color statusColor = isDanger ? Colors.redAccent : Colors.green;
+    IconData statusIcon =
+        isDanger ? Icons.local_fire_department : Icons.check_circle;
+
+    return Card(
+      color: statusColor,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Text(
+              'Status Ruangan: ${mqtt.currentRoom}',
+              style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            Icon(statusIcon, size: 40, color: Colors.white),
+            const SizedBox(height: 10),
+            Text(
+              mqtt.status,
+              style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSensorCard(String title, double value, String unit) {
+    return Card(
+      child: ListTile(
+        title: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        trailing: Text(
+          '${value.toStringAsFixed(2)} $unit',
+          style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.blueGrey),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoCard(MQTTService mqtt) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Detail Monitoring',
+                style: Theme.of(context).textTheme.headlineSmall),
+            const Divider(),
+            _infoRow('Status Koneksi MQTT:',
+                mqtt.isConnected ? 'Terhubung' : 'Terputus',
+                mqtt.isConnected ? Colors.green : Colors.grey),
+            _infoRow('Mode Sampling:', mqtt.samplingMode),
+            if (mqtt.samplingMode == 'ADAPTIVE')
+              _infoRow('Adaptive Count:', mqtt.adaptiveCount.toString()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String value, [Color? valueColor]) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: valueColor ?? Colors.black87,
+            ),
+          ),
+        ],
       ),
     );
   }

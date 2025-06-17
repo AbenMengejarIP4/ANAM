@@ -1,37 +1,52 @@
-// lib/mqtt_service.dart
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 
 class MQTTService with ChangeNotifier {
   MqttServerClient? _client;
-  double _mq135Value = 0.0;
-  double _mq2Value = 0.0;
   bool _isConnected = false;
 
+  // Variabel baru untuk menampung data dari JSON
+  String _currentRoom = "Menunggu Data...";
+  double _mq2Value = 0.0;
+  double _mq135Value = 0.0;
+  String _status = "Menunggu Data...";
+  String _samplingMode = "-";
+  int _adaptiveCount = 0;
+
   // Getters untuk UI
-  double get mq135Value => _mq135Value;
-  double get mq2Value => _mq2Value;
   bool get isConnected => _isConnected;
+  String get currentRoom => _currentRoom;
+  double get mq2Value => _mq2Value;
+  double get mq135Value => _mq135Value;
+  String get status => _status;
+  String get samplingMode => _samplingMode;
+  int get adaptiveCount => _adaptiveCount;
+
 
   void connect() async {
-    // Ganti dengan detail broker HiveMQ Anda
-    _client = MqttServerClient('your_broker_address.s1.eu.hivemq.cloud', 'your_unique_client_id');
-    _client!.port = 8883; // Gunakan 8883 untuk koneksi aman (TLS)
+    // Kredensial dari kode ESP32 Anda
+    _client = MqttServerClient('fbd1ae6f7fe343968715863d134cedbc.s1.eu.hivemq.cloud', 'flutter-anam-app-${DateTime.now().millisecondsSinceEpoch}');
+    _client!.port = 8883;
     _client!.secure = true;
     _client!.logging(on: true);
     _client!.onConnected = _onConnected;
     _client!.onDisconnected = _onDisconnected;
     _client!.onSubscribed = _onSubscribed;
     _client!.pongCallback = _pong;
+    
+    // [FIX] Menggunakan metode yang benar untuk mengabaikan error sertifikat
+    _client!.onBadCertificate = (dynamic certificate) => true;
+
 
     final connMessage = MqttConnectMessage()
-        .withClientIdentifier('your_unique_client_id')
-        .startClean() // Sesi bersih
+        .withClientIdentifier('flutter-anam-app-${DateTime.now().millisecondsSinceEpoch}')
+        .startClean()
         .withWillQos(MqttQos.atLeastOnce);
     
-    // Ganti dengan username dan password HiveMQ Anda
-    connMessage.authenticateAs('your_username', 'your_password');
+    // Username & Password dari kode ESP32 Anda
+    connMessage.authenticateAs('michaeldimas28', 'Mike.285');
     _client!.connectionMessage = connMessage;
 
     try {
@@ -41,32 +56,38 @@ class MQTTService with ChangeNotifier {
       _disconnect();
     }
 
+    // Listener untuk pesan masuk
     _client!.updates?.listen((List<MqttReceivedMessage<MqttMessage>> c) {
       final MqttPublishMessage message = c[0].payload as MqttPublishMessage;
       final payload = MqttPublishPayload.bytesToStringAsString(message.payload.message);
       
-      print('Received message: $payload from topic: ${c[0].topic}');
+      print('Received JSON: $payload');
 
-      // Asumsikan topik Anda adalah 'sensors/mq135' dan 'sensors/mq2'
-      // dan payload-nya adalah nilai numerik.
-      if (c[0].topic == 'sensors/mq135') {
-        _mq135Value = double.tryParse(payload) ?? 0.0;
-      } else if (c[0].topic == 'sensors/mq2') {
-        _mq2Value = double.tryParse(payload) ?? 0.0;
-        // Cek ambang batas untuk notifikasi
-        _checkFireHazard(_mq2Value);
+      // Parsing data JSON
+      try {
+        final jsonData = jsonDecode(payload) as Map<String, dynamic>;
+        _currentRoom = jsonData['room'] ?? 'N/A';
+        _mq2Value = (jsonData['mq2_avg'] as num?)?.toDouble() ?? 0.0;
+        _mq135Value = (jsonData['mq135_avg'] as num?)?.toDouble() ?? 0.0;
+        _status = jsonData['status'] ?? 'N/A';
+        _samplingMode = jsonData['sampling_mode'] ?? '-';
+        _adaptiveCount = (jsonData['adaptive_count'] as num?)?.toInt() ?? 0;
+
+        // Cek status untuk notifikasi
+        _checkFireHazard(_status);
+
+        notifyListeners(); // Memberi tahu UI untuk update
+      } catch(e) {
+        print("Gagal parsing JSON: $e");
       }
-      
-      notifyListeners(); // Memberi tahu UI untuk update
     });
   }
 
   void _onConnected() {
     _isConnected = true;
     print('Connected to MQTT Broker!');
-    // Langganan ke topik sensor Anda
-    _client!.subscribe('sensors/mq135', MqttQos.atLeastOnce);
-    _client!.subscribe('sensors/mq2', MqttQos.atLeastOnce);
+    // Langganan ke topik yang sama dengan yang di-publish oleh ESP32
+    _client!.subscribe('iot/robot/sensordata', MqttQos.atLeastOnce);
     notifyListeners();
   }
 
@@ -89,13 +110,13 @@ class MQTTService with ChangeNotifier {
     _onDisconnected();
   }
 
-  void _checkFireHazard(double mq2Value) {
-    // Tentukan ambang batas bahaya kebakaran Anda di sini
-    const fireThreshold = 300.0; 
-    if (mq2Value > fireThreshold) {
-      print('FIRE HAZARD DETECTED! MQ-2 value: $mq2Value');
-      // Di sini kita akan memicu logika pengiriman notifikasi
-      // (Lihat Bagian 2)
+  void _checkFireHazard(String status) {
+    // Logika notifikasi sekarang berdasarkan status dari ESP32
+    // Ini lebih andal karena keputusan dibuat di perangkat keras
+    if (status.contains("BAHAYA") || status.contains("ASAP") || status.contains("GAS")) {
+      print('FIRE HAZARD DETECTED! Status from ESP32: $status');
+      // Di sinilah backend Anda akan dipicu untuk mengirim notifikasi FCM.
+      // Untuk sekarang, kita hanya akan mencetak ke log.
     }
   }
 }
